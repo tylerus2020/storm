@@ -6,6 +6,7 @@ import backoff
 import dspy
 import requests
 from dsp import backoff_hdlr, giveup_hdlr
+from ratelimit import RateLimiter
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import Qdrant
@@ -15,6 +16,7 @@ from .utils import WebPageHelper
 
 import time
 import random
+from requests.exceptions import RequestException
 
 
 class YouRM(dspy.Retrieve):
@@ -119,12 +121,19 @@ class BingSearch(dspy.Retrieve):
             max_thread_num=webpage_helper_max_threads,
         )
         self.usage = 0
+        self.rate_limiter = RateLimiter(calls_per_second=0.2)  # 每 5 秒最多一次调用
 
         # If not None, is_valid_source shall be a function that takes a URL and returns a boolean.
         if is_valid_source:
             self.is_valid_source = is_valid_source
         else:
             self.is_valid_source = lambda x: True
+
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        # 将 headers 添加到 client 的配置中
+        self.client.config.headers.update(self.headers)
 
     def get_usage_and_reset(self):
         usage = self.usage
@@ -150,36 +159,29 @@ class BingSearch(dspy.Retrieve):
             else query_or_queries
         )
         self.usage += len(queries)
-
-        url_to_results = {}
-
-        headers = {"Ocp-Apim-Subscription-Key": self.bing_api_key}
+        collected_results = []
 
         for query in queries:
             try:
-                time.sleep(random.uniform(0.5, 1.5))
-                results = requests.get(
+                self.rate_limiter.wait()
+                headers = {"Ocp-Apim-Subscription-Key": self.bing_api_key}
+                response = requests.get(
                     self.endpoint, headers=headers, params={**self.params, "q": query}
                 ).json()
 
-                for d in results["webPages"]["value"]:
-                    if self.is_valid_source(d["url"]) and d["url"] not in exclude_urls:
-                        url_to_results[d["url"]] = {
-                            "url": d["url"],
-                            "title": d["name"],
-                            "description": d["snippet"],
-                        }
+                if hasattr(response, 'web_pages') and response.web_pages.value:
+                    for result in response.web_pages.value:
+                        if result.url not in exclude_urls:
+                            collected_results.append({
+                                'description': result.snippet,
+                                'snippets': [result.snippet],
+                                'title': result.name,
+                                'url': result.url
+                            })
+                else:
+                    print(f"No web pages found for query: {query}")
             except Exception as e:
-                logging.error(f"Error occurs when searching query {query}: {e}")
-
-        valid_url_to_snippets = self.webpage_helper.urls_to_snippets(
-            list(url_to_results.keys())
-        )
-        collected_results = []
-        for url in valid_url_to_snippets:
-            r = url_to_results[url]
-            r["snippets"] = valid_url_to_snippets[url]["snippets"]
-            collected_results.append(r)
+                print(f"Error occurred during search for query '{query}': {e}")
 
         return collected_results
 
@@ -1230,4 +1232,5 @@ class AzureAISearch(dspy.Retrieve):
                 logging.error(f"Error occurs when searching query {query}: {e}")
 
         return collected_results
+
 

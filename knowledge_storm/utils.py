@@ -18,7 +18,7 @@ from langchain_qdrant import Qdrant
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient, models
 from tqdm import tqdm
-from trafilatura import extract
+import trafilatura
 
 from .lm import OpenAIModel
 
@@ -702,6 +702,23 @@ class WebPageHelper:
 
         return articles
 
+    def _extract_content(self, url):
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            if downloaded is None:
+                print(f"Failed to download content from {url}")
+                return None
+            
+            content = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            if content is None or content.strip() == "":
+                print(f"Failed to extract content from {url}")
+                return None
+            
+            return content
+        except Exception as e:
+            print(f"Error extracting content from {url}: {e}")
+            return None
+
 
 def user_input_appropriateness_check(user_input):
     my_openai_model = OpenAIModel(
@@ -787,3 +804,4 @@ def purpose_appropriateness_check(user_input):
     except Exception as e:
         return "Please provide a more detailed explanation on your purpose of requesting this article."
     return "Approved"
+
