@@ -13,6 +13,9 @@ from qdrant_client import QdrantClient
 
 from .utils import WebPageHelper
 
+import time
+import random
+
 
 class YouRM(dspy.Retrieve):
     def __init__(self, ydc_api_key=None, k=3, is_valid_source: Callable = None):
@@ -154,6 +157,7 @@ class BingSearch(dspy.Retrieve):
 
         for query in queries:
             try:
+                time.sleep(random.uniform(0.5, 1.5))
                 results = requests.get(
                     self.endpoint, headers=headers, params={**self.params, "q": query}
                 ).json()
@@ -1226,3 +1230,4 @@ class AzureAISearch(dspy.Retrieve):
                 logging.error(f"Error occurs when searching query {query}: {e}")
 
         return collected_results
+
